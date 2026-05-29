@@ -15,8 +15,6 @@ models/
 *.pkl
 *.npy
 
-# Large generated outputs
-figures/map_interactive.html
 
 # Local tooling
 .DS_Store
