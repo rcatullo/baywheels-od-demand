@@ -235,14 +235,14 @@ The null model converged in 1{,}944 iterations; the full model in 300
 (warm-start reduced search significantly).  A convergence curve is
 shown in Figure~\ref{fig:conv}.
 
-\begin{figure}[t]
+\begin{figure*}[t]
   \centering
   \includegraphics[width=\columnwidth]{fig1_convergence.png}
   \caption{L-BFGS-B training NLL vs.\ function evaluations for the
     null and full models (log scale). Warm-starting the full model
     from the null solution reduces iterations from $\sim$1{,}900 to 300.}
   \label{fig:conv}
-\end{figure}
+\end{figure*}
 
 \subsection{Evaluation Metrics}
 
@@ -323,7 +323,7 @@ weekend demand by approximately 30\%.  Summer months (Jun--Sep) show
 $\approx$1.3$\times$ the demand of winter months (Dec--Feb), consistent
 with \citet{Gebhart2014}.
 
-\begin{figure}[t]
+\begin{figure*}[t]
   \centering
   \includegraphics[width=\columnwidth]{fig3_temporal_effects.png}
   \caption{Fitted temporal fixed effects (full model, demeaned).
@@ -331,7 +331,7 @@ with \citet{Gebhart2014}.
     Centre: day-of-week factor (weekdays in red, weekends in teal).
     Right: seasonal (monthly) factor.}
   \label{fig:temporal}
-\end{figure}
+\end{figure*}
 
 \subsection{Distance Decay and Permutation Importance}
 
@@ -349,7 +349,7 @@ recorded over three repeats.  Station origin ($\alpha$) and destination
 ($\Delta\text{NLL}\approx 3{,}500$) and month ($\approx 700$).
 Elevation contributes only $\approx 30$ NLL units.
 
-\begin{figure}[t]
+\begin{figure*}[t]
   \centering
   \includegraphics[width=\columnwidth]{fig4_distance_decay.png}
   \caption{Distance decay validation. Each dot is the binned median of
@@ -357,16 +357,16 @@ Elevation contributes only $\approx 30$ NLL units.
     line is the model prediction $\hat\gamma_d d + \log S$.
     Empirical medians closely track the fitted line.}
   \label{fig:decay}
-\end{figure}
+\end{figure*}
 
-\begin{figure}[t]
+\begin{figure*}[t]
   \centering
   \includegraphics[width=\columnwidth]{fig5_importance.png}
   \caption{Permutation feature importance ($\Delta$NLL, 3 repeats).
     Station fixed effects dominate; weather contributes meaningfully;
     elevation is marginal.}
   \label{fig:import}
-\end{figure}
+\end{figure*}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Discussion}

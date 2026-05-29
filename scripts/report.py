@@ -135,7 +135,7 @@ def fig_convergence(null_result, full_result, out_dir: Path):
 def fig_obs_vs_pred(null_result, full_result,
                     null_test: PoissonData, full_test: PoissonData,
                     out_dir: Path):
-    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5.5))
     rng = np.random.default_rng(42)
     MAX = 30_000
 
@@ -180,14 +180,14 @@ def fig_temporal_effects(full_result, out_dir: Path):
     eta_d = ly.eta_dow(theta);   eta_d = eta_d - eta_d.mean()
     eta_m = ly.eta_month(theta); eta_m = eta_m - eta_m.mean()
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+    fig, axes = plt.subplots(3, 1, figsize=(8, 10))
 
     # Hour of day
     ax = axes[0]
     ax.bar(range(24), np.exp(eta_h), color="#e15759", edgecolor="white", lw=0.4)
     ax.axhline(1, color="black", lw=0.8, ls="--")
     ax.set_xlabel("Hour of day")
-    ax.set_ylabel("Relative demand factor exp(η_h)")
+    ax.set_ylabel("Relative demand factor")
     ax.set_title("Intraday demand profile")
     ax.set_xticks(range(0, 24, 3))
     ax.set_xticklabels([f"{h:02d}:00" for h in range(0, 24, 3)], rotation=30)
@@ -198,7 +198,8 @@ def fig_temporal_effects(full_result, out_dir: Path):
     colors = ["#e15759" if i < 5 else "#76b7b2" for i in range(7)]
     ax.bar(dow, np.exp(eta_d), color=colors, edgecolor="white", lw=0.4)
     ax.axhline(1, color="black", lw=0.8, ls="--")
-    ax.set_ylabel("Relative demand factor exp(η_d)")
+    ax.set_xlabel("Day of week")
+    ax.set_ylabel("Relative demand factor")
     ax.set_title("Day-of-week profile")
 
     # Month
@@ -207,12 +208,13 @@ def fig_temporal_effects(full_result, out_dir: Path):
               "Jul","Aug","Sep","Oct","Nov","Dec"]
     ax.bar(months, np.exp(eta_m), color="#4e79a7", edgecolor="white", lw=0.4)
     ax.axhline(1, color="black", lw=0.8, ls="--")
-    ax.set_ylabel("Relative demand factor exp(η_m)")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Relative demand factor")
     ax.set_title("Seasonal (monthly) profile")
     ax.tick_params(axis="x", rotation=45)
 
     fig.suptitle("Fitted temporal fixed effects (full model, demeaned)",
-                 fontsize=12, y=1.01)
+                 fontsize=12)
     fig.tight_layout()
     savefig(fig, out_dir / "fig3_temporal_effects.png", dpi=150)
 
@@ -309,19 +311,48 @@ def fig_importance(full_result, full_train: PoissonData,
         null_result.theta, null_train, n_repeats=n_repeats, ridge=null_result.ridge
     )
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    LABELS = {
+        "origin":      "Origin station (α)",
+        "destination": "Destination station (β)",
+        "dist":        "Distance",
+        "weather":     "Weather (temp/precip/wind/humidity)",
+        "hour":        "Hour of day",
+        "month":       "Month",
+        "dow":         "Day of week",
+        "holiday":     "Holiday",
+        "elevation":   "Elevation gain",
+    }
 
-    for ax, imp, lbl in [(axes[0], imp_null, "Null"), (axes[1], imp_full, "Full")]:
-        features = [r.feature for r in imp]
-        deltas   = [r.delta_nll for r in imp]
-        stds     = [r.delta_nll_std for r in imp]
-        color    = STYLE[lbl.lower()]["color"]
-        bars = ax.barh(features[::-1], deltas[::-1],
-                       xerr=stds[::-1], color=color,
-                       error_kw=dict(ecolor="gray", capsize=3), edgecolor="white")
-        ax.set_xlabel("ΔNLL (higher = more important)")
-        ax.set_title(f"{lbl} model — permutation importance\n(train set, {n_repeats} repeats)")
-        ax.axvline(0, color="black", lw=0.8)
+    full_dict = {r.feature: r for r in imp_full}
+    null_dict = {r.feature: r for r in imp_null}
+
+    # Order by full model importance (highest first → top of chart)
+    feats  = [r.feature for r in imp_full]   # already sorted descending
+    n_feat = len(feats)
+    y      = np.arange(n_feat)
+    h      = 0.35
+
+    full_vals = np.array([full_dict[f].delta_nll     for f in feats])
+    full_stds = np.array([full_dict[f].delta_nll_std for f in feats])
+    null_vals = np.array([null_dict[f].delta_nll     if f in null_dict else 0 for f in feats])
+    null_stds = np.array([null_dict[f].delta_nll_std if f in null_dict else 0 for f in feats])
+    tick_labels = [LABELS.get(f, f) for f in feats[::-1]]  # reversed: least→most important
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.barh(y + h/2, full_vals[::-1], h,
+            xerr=full_stds[::-1], color=STYLE["full"]["color"],
+            label="Full model", error_kw=dict(ecolor="gray", capsize=3), edgecolor="white")
+    ax.barh(y - h/2, null_vals[::-1], h,
+            xerr=null_stds[::-1], color=STYLE["null"]["color"],
+            label="Null model", error_kw=dict(ecolor="gray", capsize=3), edgecolor="white")
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(tick_labels, fontsize=10)
+    ax.set_xlabel("ΔNLL when feature is permuted (higher = more important)", fontsize=10)
+    ax.set_title(f"Permutation feature importance (train set, {n_repeats} repeats)")
+    ax.set_xscale("log")
+    ax.axvline(1, color="black", lw=0.6, ls="--")
+    ax.legend(fontsize=10)
 
     fig.tight_layout()
     savefig(fig, out_dir / "fig5_importance.png", dpi=150)
@@ -339,7 +370,7 @@ def fig_station_effects(full_result, stations: pd.DataFrame, out_dir: Path):
     alpha = ly.alpha(theta)
     beta  = ly.beta(theta)
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    fig, axes = plt.subplots(2, 1, figsize=(8, 8))
 
     axes[0].hist(alpha, bins=40, color="#e15759", edgecolor="white", lw=0.3)
     axes[0].set_xlabel("Origin fixed effect α_i")
