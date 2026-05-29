@@ -222,55 +222,73 @@ def fig_temporal_effects(full_result, out_dir: Path):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fig_distance_decay(full_result, full_train: PoissonData, out_dir: Path):
-    """Fitted distance-decay curve vs empirical station-adjusted trip rates."""
+    """Station-effect-adjusted trip volume vs distance, with fitted line.
+
+    Under the model: log(N_ij) - α_i - β_j ≈ γ_dist·d_ij + log(S)
+    so binned medians of the left-hand side should lie on the fitted line.
+    """
+    from scipy.special import logsumexp
+
     ly    = full_result.layout
     theta = full_result.theta
     alpha = ly.alpha(theta)
     beta  = ly.beta(theta)
 
-    # Per-OD-pair empirical counts, adjusted for station effects so only
-    # the distance component remains: N_ij / exp(α_i + β_j)
-    log_station = alpha[full_train.orig] + beta[full_train.dest]
-    adjusted    = full_train.counts / np.exp(log_station)
+    # ── Sum counts per (orig, dest) pair ─────────────────────────────────
+    pair_key = full_train.orig.astype(np.int64) * 10_000 + full_train.dest.astype(np.int64)
+    unique_pairs, inverse = np.unique(pair_key, return_inverse=True)
+    N_ij   = np.bincount(inverse, weights=full_train.counts,
+                         minlength=len(unique_pairs))
+    # representative distance per pair (same for all hours)
+    D_ij   = np.bincount(inverse, weights=full_train.dist_obs,
+                         minlength=len(unique_pairs)) / \
+             np.bincount(inverse, minlength=len(unique_pairs))
+    orig_u = (unique_pairs // 10_000).astype(np.int32)
+    dest_u = (unique_pairs %  10_000).astype(np.int32)
 
-    # Bin by distance in 0.5 km bins up to 15 km
-    d_obs  = full_train.dist_obs
-    mask   = (d_obs > 0) & (d_obs <= 15)
-    d_bin  = np.floor(d_obs[mask] / 0.5).astype(int)  # bin index
-    n_bins = int(d_bin.max()) + 1
-    bin_median = np.array([
-        np.median(adjusted[mask][d_bin == b]) if (d_bin == b).any() else np.nan
-        for b in range(n_bins)
+    # ── log(N_ij) - α_i - β_j ────────────────────────────────────────────
+    log_residual = (np.log(N_ij + 1e-9)
+                    - alpha[orig_u] - beta[dest_u])
+
+    # ── Compute log(S) from training calendar ────────────────────────────
+    eta_cal = (ly.eta_hour(theta)[full_train.hour_cal.astype(np.int32)]
+               + ly.eta_dow(theta)[full_train.dow_cal.astype(np.int32)]
+               + ly.eta_month(theta)[full_train.month_cal.astype(np.int32)]
+               + ly.gamma_holiday(theta) * full_train.hol_cal)
+    if full_train.weather_cal is not None:
+        eta_cal = eta_cal + full_train.weather_cal @ ly.gamma_temporal_extra(theta)
+    log_S = float(logsumexp(eta_cal))
+
+    # ── Bin by distance (0.5 km bins, 0–15 km) ───────────────────────────
+    mask = (D_ij > 0.1) & (D_ij <= 15)
+    d_filt   = D_ij[mask]
+    res_filt = log_residual[mask]
+
+    bin_size = 0.5
+    d_bin = np.floor(d_filt / bin_size).astype(int)
+    bins  = np.arange(0, int(15 / bin_size))
+    bin_centers = (bins + 0.5) * bin_size
+    bin_med = np.array([
+        np.median(res_filt[d_bin == b]) if (d_bin == b).sum() >= 3 else np.nan
+        for b in bins
     ])
-    bin_centers = (np.arange(n_bins) + 0.5) * 0.5
-    valid = np.isfinite(bin_median) & (bin_median > 0)
+    valid = np.isfinite(bin_med)
 
-    # Normalise so both empirical and fitted curves start at 1 near d=0
-    ref_bin = 0
-    while ref_bin < len(bin_median) and not valid[ref_bin]:
-        ref_bin += 1
-    if ref_bin >= len(bin_median):
-        ref_bin = 0
-
-    g_dist = ly.gamma_dist(theta)
+    # ── Fitted line: γ_dist · d + log(S) ─────────────────────────────────
+    g_dist  = ly.gamma_dist(theta)
     d_range = np.linspace(0, 15, 300)
-    fitted = np.exp(g_dist * d_range)
-    # Scale empirical to align with fitted at ref bin centre
-    scale = fitted[int(bin_centers[ref_bin] / 15 * 299)] / bin_median[ref_bin] \
-            if bin_median[ref_bin] > 0 else 1.0
+    fitted  = g_dist * d_range + log_S
 
     fig, ax = plt.subplots(figsize=(7, 4))
-    ax.scatter(bin_centers[valid], bin_median[valid] * scale,
-               s=20, color="#aaaaaa", zorder=2,
-               label="Empirical (station-adjusted, binned median)")
-    style = {**STYLE["full"], "label": f"Fitted: exp({g_dist:.3f}·d)"}
+    ax.scatter(bin_centers[valid], bin_med[valid], s=30,
+               color="#aaaaaa", zorder=3,
+               label="Empirical (binned median per OD pair)")
+    style = {**STYLE["full"], "label": f"Model fit  (γ_dist = {g_dist:.3f})"}
     ax.plot(d_range, fitted, **style)
-
     ax.set_xlabel("Distance (km)")
-    ax.set_ylabel("Relative trip rate (normalised)")
-    ax.set_title("Distance decay: fitted model vs empirical data")
+    ax.set_ylabel(r"$\log N_{ij} - \alpha_i - \beta_j$")
+    ax.set_title("Distance decay: station-adjusted trip volume vs distance")
     ax.legend(fontsize=9)
-    ax.set_ylim(bottom=0)
     fig.tight_layout()
     savefig(fig, out_dir / "fig4_distance_decay.png", dpi=150)
 

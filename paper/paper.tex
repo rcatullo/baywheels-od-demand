@@ -335,11 +335,12 @@ with \citet{Gebhart2014}.
 
 \subsection{Distance Decay and Permutation Importance}
 
-Figure~\ref{fig:decay} shows the fitted distance-decay curve for both
-models: $\exp(\hat\gamma_{\rm dist}\cdot d)$ versus haversine distance
-$d$.  The null and full model estimates are nearly identical
-($\Delta\hat\gamma_{\rm dist}<0.001$), indicating that distance
-dominates the spatial kernel and is not confounded by the weather terms.
+Figure~\ref{fig:decay} validates the distance decay by plotting
+$\log N_{ij} - \hat\alpha_i - \hat\beta_j$ (observed trips with station
+effects removed) against distance for each OD pair.  Under the model
+this quantity equals $\hat\gamma_d d + \log S$; the figure confirms the
+empirical binned medians closely follow the fitted line, supporting the
+log-linear distance specification.
 
 Figure~\ref{fig:import} quantifies feature importance via permutation:
 each feature's parameters are zeroed and the increase in NLL is
@@ -351,9 +352,10 @@ Elevation contributes only $\approx 30$ NLL units.
 \begin{figure}[t]
   \centering
   \includegraphics[width=\columnwidth]{fig4_distance_decay.png}
-  \caption{Fitted distance-decay factor $\exp(\hat\gamma_{\rm dist}
-    \cdot d)$ vs.\ haversine distance. Demand decays approximately
-    50\% per km.}
+  \caption{Distance decay validation. Each dot is the binned median of
+    $\log N_{ij} - \hat\alpha_i - \hat\beta_j$ per OD pair; the red
+    line is the model prediction $\hat\gamma_d d + \log S$.
+    Empirical medians closely track the fitted line.}
   \label{fig:decay}
 \end{figure}
 
