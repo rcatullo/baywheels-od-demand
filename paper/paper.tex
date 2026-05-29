@@ -37,7 +37,7 @@ fixed effects, temporal fixed effects (hour, day-of-week, month), and
 continuous covariates: haversine inter-station distance, signed elevation
 gain, and four area-wide ERA5-Land weather variables.
 A spatial--temporal factorisation reduces gradient cost per L-BFGS-B
-\cite{Liu1989} step from $O(I^2 T)$ to $O(I^2)+O(T)$, making 1{,}258
+\cite{Kochenderfer2022} step from $O(I^2 T)$ to $O(I^2)+O(T)$, making 1{,}258
 parameters tractable. A null (distance-only) model serves as baseline.
 The full model reduces out-of-sample Poisson deviance by 0.57\% over
 the null; precipitation carries the strongest weather signal
@@ -86,7 +86,7 @@ and weather terms.
 \citet{Gebhart2014} show precipitation and temperature are the dominant
 weather drivers of bike-share usage in Washington, D.C., consistent with
 earlier studies in Europe. We replicate this finding at Bay Area scale
-with a reanalysis weather product (ERA5-Land \cite{Dee2011}) rather
+with a reanalysis weather product (ERA5-Land \cite{Munoz2021}) rather
 than station observations.
 
 \textbf{Neural and data-driven approaches.}
@@ -146,7 +146,7 @@ marginal trip counts---yielding the regularised objective
   \label{eq:obj}
 \end{equation}
 Equation~\eqref{eq:obj} is convex and smooth, so we apply L-BFGS-B
-\cite{Liu1989}.  Reference categories are pinned by setting
+\cite{Kochenderfer2022}.  Reference categories are pinned by setting
 $\alpha_0 = \eta^h_0 = \eta^d_0 = \eta^m_0 = 0$ via box constraints
 in the optimiser.
 
@@ -183,10 +183,12 @@ Station latitudes and longitudes are submitted to the USGS Elevation
 Point Query Service \cite{USGS2023} to obtain elevations in metres.
 The elevation gain matrix is $\Delta H_{ij} = h_j - h_i$ for all
 $(i,j)$ pairs.  The bulk of the Bay Area network sits within a 30-m
-vertical range, so we expected this covariate to be marginal.
+vertical range, so we expected this covariate to be marginal: Lyft
+places stations on flat, accessible ground rather than atop hills,
+limiting dock-to-dock elevation differences by design.
 
 \textbf{Weather.}
-ERA5-Land \cite{Dee2011} provides hourly 9-km gridded reanalysis at
+ERA5-Land \cite{Munoz2021} provides hourly 9-km gridded reanalysis at
 global scale.  We extract the nearest valid land cell for each hour
 covering 2023--2024 and average across cells within the Bay Area
 bounding box to produce four area-wide scalar time series:
@@ -381,10 +383,13 @@ represents a reduction of 158{,}128 deviance units.
 \textbf{Elevation.}
 We expected a negative elevation coefficient (climbs discourage
 cycling), and indeed $\hat\gamma_{\rm elev}<0$, but the magnitude is
-negligible because the majority of Bay Area dock-to-dock elevation
-differences are $<20$ m.  A similar model applied to a hilly system
-(e.g.\ San Francisco's pre-dockless network) might show a stronger
-signal.
+negligible.  Beyond the generally flat Bay Area topography, there is a
+structural reason: Lyft deliberately locates docks on level,
+accessible ground and avoids placing stations atop steep hills.  This
+operator constraint suppresses dock-to-dock elevation differences
+by design, so the signal cannot appear in the data regardless of how
+strong a biological effect exists.  A similar model applied to a
+system with hilly station siting might show a stronger effect.
 
 \textbf{Ridge on $\boldsymbol\gamma$ only.}
 Penalising only the continuous covariates and not the station or
@@ -413,9 +418,7 @@ the model recovers expected covariate signs: strong distance decay
 the dominant weather deterrent ($-40\%$ per mm/hr).  Elevation is
 negligible at Bay Area scale.  The full model improves out-of-sample
 Poisson deviance by 0.57\% over the distance-only null, confirming
-that area-wide weather adds genuine predictive signal.  Code and
-pretrained model bundles are available at
-\url{https://github.com/rcatullo/baywheels-od-demand}.
+that area-wide weather adds genuine predictive signal.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \printbibliography

@@ -21,7 +21,7 @@ We minimize the regularized negative Poisson log-likelihood
 \min_{\theta}\; {-}\ell(\theta) + \tfrac{\lambda}{2}\|\theta\|^2, \quad
 \ell(\theta) = \textstyle\sum_{ijt}\bigl(N_{ijt}\log\mu_{ijt} - \mu_{ijt}\bigr),
 \]
-where $\mu_{ijt}(\theta)$ is the predicted hourly trip rate from station $i$ to $j$ at time $t$, and $\lambda=10^{-3}$. The objective is convex and smooth, so we fit by L-BFGS-B \citep{Liu1989}.
+where $\mu_{ijt}(\theta)$ is the predicted hourly trip rate from station $i$ to $j$ at time $t$, and $\lambda=10^{-3}$. The objective is convex and smooth, so we fit by L-BFGS-B \citep{Kochenderfer2022}.
 
 \section{Dataset \& Augmentation}
 
