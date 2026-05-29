@@ -5,8 +5,5 @@ Model Split  N cells  Total obs   RMSE  Pearson R   Pois Dev         NLL
  Null  Test  2651795    2919321 1.1520     0.0318 27879897.0 11081356.96
  Full Train  1672881    1823925 1.1353     0.0363 15318669.0 11065706.83
  Full  Test  2651795    2919321 1.1517     0.0324 27721769.0 11065706.83
-  ZIP Train  1672881    1823925 1.1368     0.0360 16118573.0 11047875.93
-  ZIP  Test  2651795    2919321 1.1530     0.0320 29111699.0 11047875.93
 
 Test deviance improvement (Full vs Null): 0.57%
-Test deviance improvement (ZIP vs Null): -4.42%

@@ -57,13 +57,11 @@ def load_model(path):
 # Static map (matplotlib + contextily basemap)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def static_map(stations, full_bundle, zip_bundle, obs_train, out_path, top_flows=300):
+def static_map(stations, full_bundle, obs_train, out_path, top_flows=300):
     import contextily as ctx
 
     full_result = full_bundle["result"]
-    zip_result  = zip_bundle["result"]
     full_ly     = full_result.layout
-    zip_ly      = zip_result.layout
 
     # Filter to valid station coords
     st = stations[stations.lat > 30].copy()
@@ -77,10 +75,6 @@ def static_map(stations, full_bundle, zip_bundle, obs_train, out_path, top_flows
     # Station-level origin volume (total observed trips departing)
     orig_counts = obs_train.groupby("orig_idx")["count"].sum()
     st["volume"] = orig_counts.reindex(st.index).fillna(0)
-
-    # ZIP activity: ω_ij for each pair uses δ_int + δ_dist * d
-    d_int  = zip_ly.delta_intercept(zip_result.theta)
-    d_dist = zip_ly.delta_dist(zip_result.theta)
 
     # Top OD flows (by trip volume) for flow arrows
     flow = (obs_train.groupby(["orig_idx", "dest_idx"])["count"]
@@ -98,10 +92,10 @@ def static_map(stations, full_bundle, zip_bundle, obs_train, out_path, top_flows
         "Station locations (coloured by total departures)",
         "Model attractiveness α+β (origin + destination FE)",
         f"Top {top_flows} busiest OD flows",
-        "ZIP activity model: ω probability vs distance",
+        "Model attractiveness vs observed departure volume",
     ]
 
-    for ax in axes.flat:
+    for ax in axes.flat[:3]:
         ax.set_xlim(xmin, xmax)
         ax.set_ylim(ymin, ymax)
         ax.set_aspect("equal")
@@ -137,7 +131,6 @@ def static_map(stations, full_bundle, zip_bundle, obs_train, out_path, top_flows
     # ── Panel 3: Top OD flows ─────────────────────────────────────────────
     ax = axes[1, 0]
     add_basemap(ax)
-    # Draw flow lines coloured by trip volume
     flow_norm = plt.Normalize(flow.trips.min(), flow.trips.max())
     flow_cmap = cm.get_cmap("Blues")
     for _, row in flow.iterrows():
@@ -149,48 +142,27 @@ def static_map(stations, full_bundle, zip_bundle, obs_train, out_path, top_flows
         c = flow_cmap(flow_norm(row.trips))
         ax.plot([ox, dx], [oy, dy], color=c, alpha=0.4,
                 lw=0.5 + 2 * flow_norm(row.trips), zorder=2)
-    # Station dots on top
     ax.scatter(st.x, st.y, c="white", s=12, linewidths=0.4,
                edgecolors="gray", zorder=3, alpha=0.9)
     sm = cm.ScalarMappable(norm=flow_norm, cmap=flow_cmap)
     plt.colorbar(sm, ax=ax, shrink=0.6, label="Trips (train period)")
     ax.set_title(titles[2], fontsize=11)
 
-    # ── Panel 4: ZIP ω vs distance scatter + fitted curve ─────────────────
+    # ── Panel 4: Model attractiveness vs observed volume scatter ──────────
     ax = axes[1, 1]
     ax.axis("on")
-    ax.set_xlim(0, 20); ax.set_ylim(0, 1)
-
-    # Sample up to 5000 random OD pair distances
-    dm = zip_bundle["dist_matrix"]
-    I  = len(st)
-    # Use full distance matrix but cap at 30 km (the ZIP model's cap)
-    rng = np.random.default_rng(42)
-    idx_i = rng.integers(0, dm.shape[0], 8000)
-    idx_j = rng.integers(0, dm.shape[1], 8000)
-    dists  = np.minimum(dm[idx_i, idx_j], 30.0)
-
-    # True active status from obs_train
-    active_set = set(zip(obs_train.orig_idx, obs_train.dest_idx))
-    is_active  = np.array([(i, j) in active_set for i, j in zip(idx_i, idx_j)])
-
-    # Jitter active/inactive for visibility
-    jitter = rng.uniform(-0.02, 0.02, len(dists))
-    ax.scatter(dists[~is_active], jitter[~is_active],
-               c="#4e79a7", s=4, alpha=0.15, label="Inactive pair")
-    ax.scatter(dists[is_active], 1 + jitter[is_active],
-               c="#e15759", s=4, alpha=0.3, label="Active pair")
-
-    d_range = np.linspace(0, 20, 300)
-    omega_fit = 1.0 / (1.0 + np.exp(-(d_int + d_dist * d_range)))
-    ax.plot(d_range, omega_fit, color="#59a14f", lw=2.5,
-            label=f"Fitted ω(d)  [ω=0.5 at {-d_int/d_dist:.1f} km]")
-    ax.axhline(0.5, color="gray", lw=0.8, ls="--")
-    ax.axvline(-d_int / d_dist, color="gray", lw=0.8, ls="--")
-    ax.set_xlabel("Distance between stations (km)")
-    ax.set_ylabel("ZIP activity probability ω")
+    valid = st[st.volume > 0].copy()
+    ax.scatter(valid.attract, np.log1p(valid.volume),
+               c="#e15759", s=18, alpha=0.55, linewidths=0)
+    # Trend line
+    m, b = np.polyfit(valid.attract, np.log1p(valid.volume), 1)
+    x_fit = np.linspace(valid.attract.min(), valid.attract.max(), 100)
+    ax.plot(x_fit, m * x_fit + b, color="#4e79a7", lw=2, ls="--",
+            label=f"slope={m:.2f}")
+    ax.set_xlabel("Model attractiveness α + β")
+    ax.set_ylabel("log(1 + observed departures)")
     ax.set_title(titles[3], fontsize=11)
-    ax.legend(loc="center right", fontsize=9, markerscale=2)
+    ax.legend(fontsize=9)
     ax.set_facecolor("#f5f5f5")
 
     fig.tight_layout()
@@ -203,14 +175,12 @@ def static_map(stations, full_bundle, zip_bundle, obs_train, out_path, top_flows
 # Interactive folium map
 # ─────────────────────────────────────────────────────────────────────────────
 
-def interactive_map(stations, full_bundle, zip_bundle, obs_train, out_path, top_flows=500):
+def interactive_map(stations, full_bundle, obs_train, out_path, top_flows=500):
     import folium
     from folium.plugins import MarkerCluster
 
     full_result = full_bundle["result"]
-    zip_result  = zip_bundle["result"]
     full_ly     = full_result.layout
-    zip_ly      = zip_result.layout
 
     st = stations[stations.lat > 30].copy()
     alpha    = full_ly.alpha(full_result.theta)
@@ -219,9 +189,6 @@ def interactive_map(stations, full_bundle, zip_bundle, obs_train, out_path, top_
 
     orig_counts = obs_train.groupby("orig_idx")["count"].sum()
     st["volume"] = orig_counts.reindex(st.index).fillna(0)
-
-    d_int  = zip_ly.delta_intercept(zip_result.theta)
-    d_dist = zip_ly.delta_dist(zip_result.theta)
 
     # Centre the map
     centre = [st.lat.mean(), st.lng.mean()]
@@ -302,30 +269,6 @@ def interactive_map(stations, full_bundle, zip_bundle, obs_train, out_path, top_
         ).add_to(flow_layer)
     flow_layer.add_to(m)
 
-    # ── Layer 4: ZIP structural zeros (inactive pairs at nearby stations) ──
-    # Show pairs within 5 km that are inactive — "missing connections"
-    zip_layer = folium.FeatureGroup(name="ZIP: inactive nearby pairs (d < 5 km)", show=False)
-    dm   = zip_bundle["dist_matrix"]
-    active_set = set(zip(obs_train.orig_idx, obs_train.dest_idx))
-    count = 0
-    for i in st.index:
-        for j in st.index:
-            if i >= j: continue
-            d = dm[i, j]
-            if d > 5.0 or d < 0.1: continue
-            if (i, j) in active_set or (j, i) in active_set: continue
-            omega = 1.0 / (1.0 + np.exp(-(d_int + d_dist * min(d, 30))))
-            folium.PolyLine(
-                locations=[[st.loc[i,"lat"], st.loc[i,"lng"]],
-                           [st.loc[j,"lat"], st.loc[j,"lng"]]],
-                color="#aaaaaa", weight=1, opacity=0.4, dash_array="5",
-                tooltip=f"Inactive: {st.loc[i,'station_id']} ↔ {st.loc[j,'station_id']}  "
-                        f"d={d:.1f} km  ω={omega:.3f}",
-            ).add_to(zip_layer)
-            count += 1
-    zip_layer.add_to(m)
-    print(f"  ZIP inactive nearby pairs drawn: {count}")
-
     folium.LayerControl(collapsed=False).add_to(m)
 
     m.save(str(out_path))
@@ -345,16 +288,15 @@ def main():
 
     print("Loading data and models …")
     full_bundle = load_model(model_dir / "full_model.pkl")
-    zip_bundle  = load_model(model_dir / "zip_model.pkl")
     stations    = pd.read_parquet(data_dir / "stations.parquet")
     obs_train   = pd.read_parquet(data_dir / "obs_train.parquet")
 
     print("Building static map …")
-    static_map(stations, full_bundle, zip_bundle, obs_train,
+    static_map(stations, full_bundle, obs_train,
                out_dir / "map_static.png", top_flows=args.top_flows)
 
     print("Building interactive map …")
-    interactive_map(stations, full_bundle, zip_bundle, obs_train,
+    interactive_map(stations, full_bundle, obs_train,
                     out_dir / "map_interactive.html", top_flows=args.top_flows)
 
     print("\nDone.")

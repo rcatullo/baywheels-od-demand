@@ -50,7 +50,6 @@ WEATHER_VARS = (
 STYLE = {
     "null": dict(color="#4e79a7", ls="--", lw=1.5, label="Null model"),
     "full": dict(color="#e15759", ls="-",  lw=1.5, label="Full model"),
-    "zip":  dict(color="#59a14f", ls="-",  lw=1.5, label="ZIP model"),
 }
 
 plt.rcParams.update({
@@ -77,8 +76,7 @@ def load_split(data_dir: Path, split: str,
                layout: ParamLayout) -> PoissonData:
     obs = pd.read_parquet(data_dir / f"obs_{split}.parquet")
     cal = pd.read_parquet(data_dir / f"cal_{split}.parquet")
-    return PoissonData.build(obs, dist_matrix, layout, cal, elev_matrix,
-                             build_zip_mask=layout.use_zip)
+    return PoissonData.build(obs, dist_matrix, layout, cal, elev_matrix)
 
 
 def get_metrics(theta, data) -> dict:
@@ -205,32 +203,19 @@ def fig_temporal_effects(full_result, out_dir: Path):
 # Figure 4: Distance decay
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fig_distance_decay(null_result, full_result, zip_result, out_dir: Path):
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+def fig_distance_decay(null_result, full_result, out_dir: Path):
+    fig, ax = plt.subplots(figsize=(7, 4))
     d_range = np.linspace(0, 20, 300)
 
-    ax = axes[0]
-    for lbl, res in [("null", null_result), ("full", full_result),
-                     ("zip",  zip_result)]:
+    for lbl, res in [("null", null_result), ("full", full_result)]:
         g_dist = res.layout.gamma_dist(res.theta)
         ax.plot(d_range, np.exp(g_dist * d_range), **STYLE[lbl])
+
     ax.set_xlabel("Distance (km)")
     ax.set_ylabel("Count decay exp(γ_dist · d)")
     ax.set_title("Fitted count-level distance decay")
     ax.legend()
     ax.set_ylim(bottom=0)
-
-    ax = axes[1]
-    ly = zip_result.layout
-    d_int  = ly.delta_intercept(zip_result.theta)
-    d_dist = ly.delta_dist(zip_result.theta)
-    omega  = 1.0 / (1.0 + np.exp(-(d_int + d_dist * d_range)))
-    ax.plot(d_range, omega, **STYLE["zip"])
-    ax.set_xlabel("Distance (km)")
-    ax.set_ylabel("Pair activity probability ω_ij")
-    ax.set_title("ZIP: P(OD pair ever active) vs distance")
-    ax.set_ylim(0, 1)
-    ax.axhline(0.5, color="gray", ls=":", lw=1)
 
     fig.tight_layout()
     savefig(fig, out_dir / "fig4_distance_decay.png", dpi=150)
@@ -420,18 +405,14 @@ def main():
     print("Loading model bundles …")
     null_bundle = load_bundle(model_dir / "null_model.pkl")
     full_bundle = load_bundle(model_dir / "full_model.pkl")
-    zip_bundle  = load_bundle(model_dir / "zip_model.pkl")
 
     null_result = null_bundle["result"]
     full_result = full_bundle["result"]
-    zip_result  = zip_bundle["result"]
 
     dm_null = null_bundle["dist_matrix"]
     dm_full = full_bundle["dist_matrix"]
-    dm_zip  = zip_bundle["dist_matrix"]
     em_null = null_bundle.get("elev_matrix")
     em_full = full_bundle.get("elev_matrix")
-    em_zip  = zip_bundle.get("elev_matrix")
     stations = full_bundle["stations"]
 
     print("Loading train / test splits …")
@@ -439,8 +420,6 @@ def main():
     null_test  = load_split(data_dir, "test",  dm_null, em_null, null_result.layout)
     full_train = load_split(data_dir, "train", dm_full, em_full, full_result.layout)
     full_test  = load_split(data_dir, "test",  dm_full, em_full, full_result.layout)
-    zip_train  = load_split(data_dir, "train", dm_zip,  em_zip,  zip_result.layout)
-    zip_test   = load_split(data_dir, "test",  dm_zip,  em_zip,  zip_result.layout)
 
     print("\nGenerating figures …")
 
@@ -453,8 +432,8 @@ def main():
     print("  fig3 – temporal fixed effects")
     fig_temporal_effects(full_result, out_dir)
 
-    print("  fig4 – distance decay + ZIP activity")
-    fig_distance_decay(null_result, full_result, zip_result, out_dir)
+    print("  fig4 – distance decay")
+    fig_distance_decay(null_result, full_result, out_dir)
 
     print("  fig5 – feature importance")
     fig_importance(full_result, full_train, null_result, null_train,
@@ -471,15 +450,13 @@ def main():
         [
             ("Null", null_result, null_train, null_test),
             ("Full", full_result, full_train, full_test),
-            ("ZIP",  zip_result,  zip_train,  zip_test),
         ],
         out_dir,
     )
 
     # ── Convergence summary ───────────────────────────────────────────────
     print("\n=== Convergence summary ===")
-    for lbl, res in [("Null", null_result), ("Full", full_result),
-                     ("ZIP",  zip_result)]:
+    for lbl, res in [("Null", null_result), ("Full", full_result)]:
         status = "CONVERGED" if res.converged else "not converged"
         print(f"  {lbl}: nll={res.nll:.2f}  ‖grad‖={res.grad_norm:.2e}  "
               f"iter={res.n_iter}  [{status}]")
@@ -487,16 +464,6 @@ def main():
     print("\n=== Fitted γ coefficients (full model) ===")
     for n, v in zip(names, vals):
         print(f"  {n:<30} = {v:+.6f}")
-
-    # ZIP-specific summary
-    ly = zip_result.layout
-    print("\n=== ZIP activity model ===")
-    print(f"  δ_intercept = {ly.delta_intercept(zip_result.theta):+.4f}")
-    print(f"  δ_dist      = {ly.delta_dist(zip_result.theta):+.6f}  km⁻¹")
-    d50 = -ly.delta_intercept(zip_result.theta) / ly.delta_dist(zip_result.theta)
-    print(f"  Distance at ω=0.5: {d50:.2f} km")
-    omega0 = 1.0 / (1.0 + np.exp(-ly.delta_intercept(zip_result.theta)))
-    print(f"  ω at d=0 km:       {omega0:.4f}")
 
     print(f"\nAll figures saved to {out_dir}/")
 

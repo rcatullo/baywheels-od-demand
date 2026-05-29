@@ -31,7 +31,6 @@ class ParamLayout:
     n_stations: int
     extra_gamma: Sequence[str] = ()  # names of all extra covariates, in order
     n_spatial_gamma: int = 0         # how many of extra_gamma are spatial
-    use_zip: bool = False            # add hurdle activity model (δ_intercept, δ_dist)
 
     # ------------------------------------------------------------------ #
     # Core slices                                                          #
@@ -96,32 +95,9 @@ class ParamLayout:
     def n_temporal_gamma(self) -> int:
         return len(self.extra_gamma) - self.n_spatial_gamma
 
-    # ------------------------------------------------------------------ #
-    # ZIP activity model slices (only present when use_zip=True)         #
-    # ------------------------------------------------------------------ #
-
-    @property
-    def sl_delta_intercept(self) -> slice:
-        """Log-odds intercept for OD-pair activity (ZIP only)."""
-        base = 2 * self.n_stations + 45 + len(self.extra_gamma)
-        return slice(base, base + 1)
-
-    @property
-    def sl_delta_dist(self) -> slice:
-        """Distance coefficient for OD-pair activity log-odds (ZIP only)."""
-        base = 2 * self.n_stations + 45 + len(self.extra_gamma) + 1
-        return slice(base, base + 1)
-
-    def delta_intercept(self, theta: np.ndarray) -> float:
-        return float(theta[self.sl_delta_intercept][0])
-
-    def delta_dist(self, theta: np.ndarray) -> float:
-        return float(theta[self.sl_delta_dist][0])
-
     @property
     def n_params(self) -> int:
-        base = 2 * self.n_stations + 45 + len(self.extra_gamma)
-        return base + (2 if self.use_zip else 0)
+        return 2 * self.n_stations + 45 + len(self.extra_gamma)
 
     # ------------------------------------------------------------------ #
     # Named views into an existing theta array                            #

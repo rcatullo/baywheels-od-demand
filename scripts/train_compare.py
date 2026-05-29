@@ -82,7 +82,6 @@ def load_data(data_dir: Path) -> dict:
 def build_layout_and_data(
     d: dict,
     include_extras: bool,
-    use_zip: bool = False,
 ) -> tuple[ParamLayout, PoissonData]:
     n_stations = d["n_stations"]
     if include_extras:
@@ -101,12 +100,10 @@ def build_layout_and_data(
         n_stations=n_stations,
         extra_gamma=extra_gamma,
         n_spatial_gamma=n_spatial,
-        use_zip=use_zip,
     )
     elev = d["elev_matrix"] if include_extras else None
     data = PoissonData.build(
-        d["obs_train"], d["dist_matrix"], layout, d["cal_train"], elev,
-        build_zip_mask=use_zip,
+        d["obs_train"], d["dist_matrix"], layout, d["cal_train"], elev
     )
     return layout, data
 
@@ -242,54 +239,10 @@ def main() -> None:
     print(f"\nSaved full model → {full_path}")
     print_coefficients(full_result, "Full")
 
-    # ── 3. ZIP model (hurdle + full covariates, warm-started from full θ) ─
-    zip_layout, zip_data = build_layout_and_data(
-        d, include_extras=True, use_zip=True
-    )
-    # warm-start: copy full-model θ into zip θ (zip has 2 extra params at end)
-    zip_theta0 = zip_layout.zeros()
-    zip_theta0[:len(full_result.theta)] = full_result.theta
-    # initialise δ_intercept to log(n_active / n_inactive) ≈ log(83K/281K)
-    n_active   = int(zip_data.active_mask.sum())
-    n_inactive = zip_layout.n_stations ** 2 - n_active
-    zip_theta0[zip_layout.sl_delta_intercept] = float(
-        np.log(n_active / n_inactive)
-    )
-    # δ_dist starts at 0 (no prior knowledge of distance effect on activity)
-
-    zip_result = train_one(
-        "ZIP model (hurdle + elevation + weather)",
-        zip_data, args.ridge, args.maxiter, args.gtol,
-        theta0=zip_theta0,
-    )
-    zip_bundle = {
-        "result":      zip_result,
-        "stations":    d["stations"],
-        "dist_matrix": d["dist_matrix"],
-        "elev_matrix": d["elev_matrix"],
-        "label":       "zip",
-    }
-    zip_path = out_dir / "zip_model.pkl"
-    with open(zip_path, "wb") as f:
-        pickle.dump(zip_bundle, f, protocol=5)
-    print(f"\nSaved ZIP model → {zip_path}")
-    print_coefficients(zip_result, "ZIP")
-    ly = zip_result.layout
-    print(f"  δ_intercept = {ly.delta_intercept(zip_result.theta):+.4f}")
-    print(f"  δ_dist      = {ly.delta_dist(zip_result.theta):+.4f}")
-    n_act = int(zip_data.active_mask.sum())
-    n_tot = ly.n_stations ** 2
-    omega_mean = float(
-        1.0 / (1.0 + np.exp(-ly.delta_intercept(zip_result.theta)))
-    )
-    print(f"  Active pairs: {n_act:,} / {n_tot:,}  "
-          f"({n_act/n_tot:.1%})  baseline ω={omega_mean:.4f}")
-
     # ── Summary ───────────────────────────────────────────────────────────
     print("\n=== Summary ===")
     print(f"  {'Model':<8}  {'Params':>7}  {'NLL':>14}  {'‖grad‖':>10}  {'Converged'}")
-    for lbl, res in [("Null", null_result), ("Full", full_result),
-                     ("ZIP",  zip_result)]:
+    for lbl, res in [("Null", null_result), ("Full", full_result)]:
         print(f"  {lbl:<8}  {res.layout.n_params:>7}  "
               f"{res.nll:>14.2f}  {res.grad_norm:>10.2e}  {res.converged}")
 

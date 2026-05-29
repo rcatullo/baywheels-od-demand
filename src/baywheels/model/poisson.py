@@ -70,11 +70,6 @@ class PoissonData:
     weather_obs: np.ndarray | None = None   # (n_obs, n_weather)
     N_weather: np.ndarray | None = None     # (n_weather,)
 
-    # ── Optional: ZIP activity mask ───────────────────────────────────────
-    # True for OD pairs that appear at least once in training.
-    # When set, neg_log_likelihood uses the hurdle formulation.
-    active_mask: np.ndarray | None = None   # bool (I, I)
-
     # ------------------------------------------------------------------ #
     # Factory                                                              #
     # ------------------------------------------------------------------ #
@@ -87,7 +82,6 @@ class PoissonData:
         layout: ParamLayout,
         cal: "pd.DataFrame",
         elev_matrix: np.ndarray | None = None,
-        build_zip_mask: bool = False,
     ) -> "PoissonData":
         """Construct PoissonData from processed DataFrames.
 
@@ -151,14 +145,6 @@ class PoissonData:
             weather_cal_df.fillna(weather_cal_df.mean(), inplace=True)
             weather_cal_arr = weather_cal_df.to_numpy(dtype=np.float64)
 
-        # ── ZIP active-pair mask ──────────────────────────────────────────
-        active_mask_arr: np.ndarray | None = None
-        if build_zip_mask or layout.use_zip:
-            active_mask_arr = np.zeros(
-                (n_stations, n_stations), dtype=bool
-            )
-            active_mask_arr[orig, dest] = True
-
         return cls(
             orig=orig, dest=dest,
             hour_obs=hour_obs, dow_obs=dow_obs,
@@ -179,7 +165,6 @@ class PoissonData:
             weather_obs=weather_obs_arr,
             weather_cal=weather_cal_arr,
             N_weather=N_weather_arr,
-            active_mask=active_mask_arr,
         )
 
 
@@ -219,20 +204,12 @@ def neg_log_likelihood(
 
     log_mat = alpha[:, None] + log_K + beta[None, :]      # (I, I)
 
-    # ZIP: restrict the spatial sum to active OD pairs only.
-    # For the standard Poisson model, active_mask is None and we sum all pairs.
-    if data.active_mask is not None:
-        exp_log_mat = np.exp(log_mat) * data.active_mask   # (I,I) masked
-        M   = float(exp_log_mat.sum())
-        vKu = exp_log_mat.sum(axis=1)    # (I,) row sums over active pairs
-        uKv = exp_log_mat.sum(axis=0)    # (I,) col sums over active pairs
-    else:
-        log_M   = float(logsumexp(log_mat))
-        M       = np.exp(log_M)
-        log_vKu = logsumexp(log_mat, axis=1)   # (I,)
-        vKu     = np.exp(log_vKu)
-        log_uKv = logsumexp(log_mat, axis=0)   # (I,)
-        uKv     = np.exp(log_uKv)
+    log_M   = float(logsumexp(log_mat))
+    M       = np.exp(log_M)
+    log_vKu = logsumexp(log_mat, axis=1)   # (I,)
+    vKu     = np.exp(log_vKu)
+    log_uKv = logsumexp(log_mat, axis=0)   # (I,)
+    uKv     = np.exp(log_uKv)
 
     # ------------------------------------------------------------------ #
     # Temporal sum  η_t = η_h + η_d + η_m + γ_hol·hol + Σ_k γ_tk·w_k   #
@@ -279,38 +256,12 @@ def neg_log_likelihood(
     ll_obs = float((data.counts * log_mu_obs).sum())
     ll     = ll_obs - MS
 
-    # ------------------------------------------------------------------ #
-    # ZIP activity log-likelihood (hurdle at OD-pair level)               #
-    #   LL_activity = Σ_active log σ(δ₀ + δ_d·d) + Σ_inactive log σ(-·) #
-    # ------------------------------------------------------------------ #
-    zip_activity_ll = 0.0
-    omega = None          # (I,I) activity probabilities — computed lazily
-    if data.active_mask is not None and ly.use_zip:
-        from scipy.special import log_expit, expit
-        d_int  = ly.delta_intercept(theta)
-        d_dist = ly.delta_dist(theta)
-        # Cap at 30 km so GPS-outlier distances (>1000 km) don't overflow
-        dist_cap = np.minimum(data.dist_matrix, 30.0)
-        log_odds = d_int + d_dist * dist_cap              # (I,I)
-        # Use scipy's stable implementations: no overflow risk
-        log_sig  = log_expit(log_odds)    # log σ(x)   = log ω
-        log_1sig = log_expit(-log_odds)   # log(1-σ(x))= log(1-ω)
-        zip_activity_ll = float(
-            np.where(data.active_mask, log_sig, log_1sig).sum()
-        )
-        ll += zip_activity_ll
-        omega = expit(log_odds)           # σ(x), numerically stable
-
-    # Ridge on γ parameters only (not δ intercept; δ_dist is penalized).
-    # δ_intercept sets the overall activity rate and should not be shrunk.
+    # Ridge on γ parameters only — station and temporal fixed effects are
+    # identified by the data and should not be shrunk toward zero.
     gamma_start = ly.sl_gamma_holiday.start
-    gamma_end   = ly.sl_delta_intercept.start if ly.use_zip else ly.n_params
-    theta_gamma = theta[gamma_start:gamma_end]
+    theta_gamma = theta[gamma_start:]
     penalty = 0.5 * ridge * float(np.dot(theta_gamma, theta_gamma))
-    if ly.use_zip:
-        # Also penalize δ_dist (but not δ_intercept)
-        penalty += 0.5 * ridge * ly.delta_dist(theta) ** 2
-    nll = -(ll - penalty)
+    nll     = -(ll - penalty)
 
     # ------------------------------------------------------------------ #
     # Gradient                                                             #
@@ -326,18 +277,12 @@ def neg_log_likelihood(
 
     grad[ly.sl_gamma_holiday] = data.N_hol  - M * S_hol
 
-    # For the dist gradient, DKM sums only active pairs in ZIP mode
-    exp_log_mat_for_grad = (
-        np.exp(log_mat) * data.active_mask
-        if data.active_mask is not None
-        else np.exp(log_mat)
-    )
-    DKM = float(np.sum(data.dist_matrix * exp_log_mat_for_grad))
+    DKM = float(np.sum(data.dist_matrix * np.exp(log_mat)))
     grad[ly.sl_gamma_dist] = data.N_dist - DKM * S
 
     # Spatial extra (elevation gain)
     if n_spatial > 0 and data.elev_matrix is not None:
-        DKM_elev = float(np.sum(data.elev_matrix * exp_log_mat_for_grad))
+        DKM_elev = float(np.sum(data.elev_matrix * np.exp(log_mat)))
         grad[ly.sl_gamma_spatial_extra] = data.N_elev - DKM_elev * S
     elif n_spatial > 0:
         grad[ly.sl_gamma_spatial_extra] = 0.0
@@ -349,37 +294,13 @@ def neg_log_likelihood(
     elif n_temporal > 0:
         grad[ly.sl_gamma_temporal_extra] = 0.0
 
-    # ZIP activity gradient
-    if ly.use_zip and omega is not None:
-        # ∂LL/∂δ_int  = Σ_active(1-ω) - Σ_inactive(ω)
-        # ∂LL/∂δ_dist = Σ_active d_cap*(1-ω) - Σ_inactive d_cap*(ω)
-        # dist_cap is already computed above; reuse it here
-        one_minus_omega = 1.0 - omega
-        grad_delta_int  = float(
-            np.where(data.active_mask, one_minus_omega, -omega).sum()
-        )
-        grad_delta_dist = float(
-            np.where(data.active_mask,
-                     dist_cap * one_minus_omega,
-                     -dist_cap * omega).sum()
-        )
-        grad[ly.sl_delta_intercept] = grad_delta_int
-        grad[ly.sl_delta_dist]      = grad_delta_dist
-
     grad = -grad
-    grad[gamma_start:gamma_end] += ridge * theta_gamma
-    if ly.use_zip:
-        grad[ly.sl_delta_dist] += ridge * ly.delta_dist(theta)
+    grad[gamma_start:] += ridge * theta_gamma
     return nll, grad
 
 
 def predict_mu_obs(theta: np.ndarray, data: PoissonData) -> np.ndarray:
-    """Return E[N_ijt] for every observed cell.
-
-    For the standard Poisson model this is exp(log μ_ijt).
-    For the ZIP hurdle model this is ω_ij · exp(log μ_ijt), where
-    ω_ij = sigmoid(δ_intercept + δ_dist · d_ij) is the pair activity prob.
-    """
+    """Return μ_ijt for every observed cell (in-sample or out-of-sample)."""
     ly = data.layout
     n_spatial  = ly.n_spatial_gamma
     n_temporal = ly.n_temporal_gamma
@@ -398,15 +319,4 @@ def predict_mu_obs(theta: np.ndarray, data: PoissonData) -> np.ndarray:
     if n_temporal > 0 and data.weather_obs is not None:
         log_mu = log_mu + data.weather_obs @ ly.gamma_temporal_extra(theta)
 
-    mu = np.exp(log_mu)
-
-    # Multiply by pair activity probability for the ZIP hurdle model
-    if ly.use_zip:
-        from scipy.special import expit
-        d_int  = ly.delta_intercept(theta)
-        d_dist = ly.delta_dist(theta)
-        dist_obs_cap = np.minimum(data.dist_obs, 30.0)
-        omega_obs = expit(d_int + d_dist * dist_obs_cap)
-        mu = mu * omega_obs
-
-    return mu
+    return np.exp(log_mu)

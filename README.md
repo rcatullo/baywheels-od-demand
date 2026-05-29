@@ -15,10 +15,6 @@ where α_i, β_j are station fixed effects, η_t captures hour-of-day,
 day-of-week, month, and holiday structure, and the γ covariates add
 distance decay, elevation gain, and area-wide weather effects.
 
-An optional **ZIP hurdle extension** adds a logistic activity model
-per OD pair: ω_ij = σ(δ₀ + δ_dist·d_ij), separating structural zeros
-(pairs that never exchange trips) from the Poisson count model.
-
 All models are fitted via L-BFGS-B with analytic gradients exploiting
 the **M·S factorisation**: the expected-count sum over I²·T cells reduces
 to O(I²) + O(T) per gradient step, making large station networks tractable.
@@ -29,7 +25,6 @@ to O(I²) + O(T) per gradient step, making large station networks tractable.
 |-------|-----------------------|-----------|
 | Null (distance + FEs only) | 27,879,897 | 11,081,357 |
 | Full (+ elevation + weather) | 27,721,769 | 11,065,707 |
-| ZIP (+ OD-pair activity model) | — | **11,047,876** |
 
 Key fitted coefficients (full model):
 
@@ -42,8 +37,6 @@ Key fitted coefficients (full model):
 | Wind speed | −0.004 | Negligible |
 | Elevation gain | −0.00001 | Negligible at Bay Wheels scale |
 
-ZIP activity model: ω = 0.5 crossover at **4.35 km** distance.
-
 ## Repository layout
 
 ```
@@ -53,9 +46,8 @@ src/baywheels/
     aggregator.py    Aggregate to hourly OD counts; haversine distances; elevation matrix
     calendar.py      Build training-period calendar with temporal features + weather
   model/
-    params.py        Parameter vector layout (α, β, η, γ, δ)
+    params.py        Parameter vector layout (α, β, η, γ)
     poisson.py       Poisson log-likelihood and analytic gradient (M·S factorisation)
-                     ZIP hurdle extension: active-pair mask, logistic activity model
     fit.py           L-BFGS-B wrapper; FitResult dataclass
   eval/
     metrics.py       MAE, RMSE, Pearson R, Poisson deviance
@@ -64,7 +56,7 @@ src/baywheels/
 
 scripts/
   prepare_data.py    Aggregate raw CSVs → processed parquets, distance/elevation matrices
-  train_compare.py   Train null, full, and ZIP models; save .pkl bundles
+  train_compare.py   Train null and full models; save .pkl bundles
   train_baseline.py  Single-model training entry point
   evaluate.py        Per-model accuracy metrics and coefficient summary
   report.py          All report figures (7 plots + metrics table)
@@ -129,8 +121,3 @@ cost per gradient step instead of O(I²T).
 (γ_dist, γ_holiday, γ_elev, γ_wx, δ_dist) but not to station or temporal
 fixed effects, which are identified by the data.
 
-**ZIP hurdle**: The 604-station network has 364,816 possible OD pairs;
-only 83,376 (23%) ever appear in training. The hurdle model separates
-structural zeros (distant, never-used pairs) from the Poisson count model
-via a logistic activity probability ω_ij = σ(δ₀ + δ_dist·d_ij). ZIP
-improves train NLL by 33,481 over the null model.
