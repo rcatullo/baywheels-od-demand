@@ -95,17 +95,35 @@ def savefig(fig, path: Path, **kw):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fig_convergence(null_result, full_result, out_dir: Path):
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+
+    # Left: absolute NLL (shows the two models' final levels)
+    ax = axes[0]
     for lbl, res in [("null", null_result), ("full", full_result)]:
         h = np.array(res.nll_history)
-        ax.plot(np.arange(1, len(h) + 1), h, **STYLE[lbl])
-
+        ax.plot(np.arange(1, len(h) + 1), h / 1e6, **STYLE[lbl])
     ax.set_xlabel("Function evaluation")
-    ax.set_ylabel("Negative log-likelihood")
-    ax.set_title("L-BFGS-B training convergence")
+    ax.set_ylabel("NLL (×10⁶)")
+    ax.set_title("Training NLL (absolute)")
     ax.legend()
-    ax.set_yscale("log")
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+
+    # Right: convergence gap  NLL_t - NLL_final  on log scale
+    ax = axes[1]
+    for lbl, res in [("null", null_result), ("full", full_result)]:
+        h = np.array(res.nll_history)
+        gap = h - h.min()
+        # Keep only points where gap > 0 to avoid log(0)
+        pos = gap > 0
+        ax.plot(np.where(pos)[0] + 1, gap[pos], **STYLE[lbl])
+    ax.set_xlabel("Function evaluation")
+    ax.set_ylabel("NLL − NLL* (convergence gap)")
+    ax.set_title("Convergence rate (log scale)")
+    ax.set_yscale("log")
+    ax.legend()
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+
+    fig.suptitle("L-BFGS-B training convergence", fontsize=12)
     fig.tight_layout()
     savefig(fig, out_dir / "fig1_convergence.png", dpi=150)
 
@@ -203,20 +221,56 @@ def fig_temporal_effects(full_result, out_dir: Path):
 # Figure 4: Distance decay
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fig_distance_decay(null_result, full_result, out_dir: Path):
-    fig, ax = plt.subplots(figsize=(7, 4))
-    d_range = np.linspace(0, 20, 300)
+def fig_distance_decay(full_result, full_train: PoissonData, out_dir: Path):
+    """Fitted distance-decay curve vs empirical station-adjusted trip rates."""
+    ly    = full_result.layout
+    theta = full_result.theta
+    alpha = ly.alpha(theta)
+    beta  = ly.beta(theta)
 
-    for lbl, res in [("null", null_result), ("full", full_result)]:
-        g_dist = res.layout.gamma_dist(res.theta)
-        ax.plot(d_range, np.exp(g_dist * d_range), **STYLE[lbl])
+    # Per-OD-pair empirical counts, adjusted for station effects so only
+    # the distance component remains: N_ij / exp(α_i + β_j)
+    log_station = alpha[full_train.orig] + beta[full_train.dest]
+    adjusted    = full_train.counts / np.exp(log_station)
+
+    # Bin by distance in 0.5 km bins up to 15 km
+    d_obs  = full_train.dist_obs
+    mask   = (d_obs > 0) & (d_obs <= 15)
+    d_bin  = np.floor(d_obs[mask] / 0.5).astype(int)  # bin index
+    n_bins = int(d_bin.max()) + 1
+    bin_median = np.array([
+        np.median(adjusted[mask][d_bin == b]) if (d_bin == b).any() else np.nan
+        for b in range(n_bins)
+    ])
+    bin_centers = (np.arange(n_bins) + 0.5) * 0.5
+    valid = np.isfinite(bin_median) & (bin_median > 0)
+
+    # Normalise so both empirical and fitted curves start at 1 near d=0
+    ref_bin = 0
+    while ref_bin < len(bin_median) and not valid[ref_bin]:
+        ref_bin += 1
+    if ref_bin >= len(bin_median):
+        ref_bin = 0
+
+    g_dist = ly.gamma_dist(theta)
+    d_range = np.linspace(0, 15, 300)
+    fitted = np.exp(g_dist * d_range)
+    # Scale empirical to align with fitted at ref bin centre
+    scale = fitted[int(bin_centers[ref_bin] / 15 * 299)] / bin_median[ref_bin] \
+            if bin_median[ref_bin] > 0 else 1.0
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.scatter(bin_centers[valid], bin_median[valid] * scale,
+               s=20, color="#aaaaaa", zorder=2,
+               label="Empirical (station-adjusted, binned median)")
+    style = {**STYLE["full"], "label": f"Fitted: exp({g_dist:.3f}·d)"}
+    ax.plot(d_range, fitted, **style)
 
     ax.set_xlabel("Distance (km)")
-    ax.set_ylabel("Count decay exp(γ_dist · d)")
-    ax.set_title("Fitted count-level distance decay")
-    ax.legend()
+    ax.set_ylabel("Relative trip rate (normalised)")
+    ax.set_title("Distance decay: fitted model vs empirical data")
+    ax.legend(fontsize=9)
     ax.set_ylim(bottom=0)
-
     fig.tight_layout()
     savefig(fig, out_dir / "fig4_distance_decay.png", dpi=150)
 
@@ -432,8 +486,8 @@ def main():
     print("  fig3 – temporal fixed effects")
     fig_temporal_effects(full_result, out_dir)
 
-    print("  fig4 – distance decay")
-    fig_distance_decay(null_result, full_result, out_dir)
+    print("  fig4 – distance decay vs empirical")
+    fig_distance_decay(full_result, full_train, out_dir)
 
     print("  fig5 – feature importance")
     fig_importance(full_result, full_train, null_result, null_train,
