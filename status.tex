@@ -1,0 +1,73 @@
+\documentclass[twoside,11pt]{article}
+\usepackage{aa222-jmlr2e}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{cleveref}
+\begin{document}
+\title{Shift Happens: A Topography- and Weather-Augmented Gravity Model for Bay Area Bike-Share}
+\newcommand{\shorttitle}{Shift Happens}
+\name{Ryan Catullo}
+\email{rcatullo@stanford.edu}
+\maketitle
+
+\section{Problem}
+
+\subsection{Objective}
+
+We minimize the regularized negative Poisson log-likelihood
+\[
+\min_{\theta}\; {-}\ell(\theta) + \tfrac{\lambda}{2}\|\theta\|^2, \quad
+\ell(\theta) = \textstyle\sum_{ijt}\bigl(N_{ijt}\log\mu_{ijt} - \mu_{ijt}\bigr),
+\]
+where $\mu_{ijt}(\theta)$ is the predicted hourly trip rate from station $i$ to $j$ at time $t$, and $\lambda=10^{-3}$. The objective is convex and smooth, so we fit by L-BFGS-B \citep{Liu1989}.
+
+\section{Dataset \& Augmentation}
+
+Bay Wheels archives (2023--2024, 4.7M named-station trips, 604 stations) are aggregated to hourly OD counts. Station elevations were queried from the USGS EPQS API. Weather was initially planned as per-trip lookups, but this breaks the spatial--temporal factorisation needed for efficient gradient computation, so we switched to hourly \emph{area-wide} averages from ERA5-Land. Year 2023 trains the model (1.8M nonzero OD cells) and 2024 is held out (2.9M cells).
+
+\paragraph{Data issues encountered.} Several non-trivial bugs arose during preprocessing. (1)~Bay Wheels CSVs mix sub-second and whole-second timestamps across rows; pandas infers a format from the first rows and silently coerces the rest to \texttt{NaT}, causing up to 66\% weather join misses in some months. Fixed by passing \texttt{format="mixed"} to \texttt{pd.to\_datetime}. (2)~ERA5-Land grid cells over the bay return 100\% null temperature; nearby trips were incorrectly assigned no weather. Fixed by remapping each water cell to its nearest valid land cell. (3)~A single missing weather hour caused \texttt{NaN} to propagate through the log-likelihood (since $\texttt{nan}\times 0 = \texttt{nan}$ in IEEE 754), returning $10^{30}$ at $\theta=0$ and stalling the optimizer immediately. Fixed by imputing missing calendar hours with the column mean.
+
+\section{Methods}
+
+\subsection{Baseline}
+
+We model $N_{ijt}\sim\text{Poisson}(\mu_{ijt})$ \citep{Flowerdew1982} with log-rate equal to the sum of station origin/destination effects $(\alpha_i,\beta_j)$, hour-of-day, day-of-week, and month fixed effects $(\eta)$, plus continuous covariates: haversine distance $d_{ij}$, signed elevation gain $\Delta h_{ij}$, and four area-wide weather variables $\mathbf{w}_t$. The model has 1{,}258 parameters. Gradients exploit a spatial--temporal factorisation that reduces each evaluation from $O(I^2 T)$ to $O(I^2)+O(T)$.
+
+\subsection{Preliminary Results}
+
+The optimizer has not yet converged after 5{,}000 iterations ($\|\nabla\ell\|=7.2\times10^4$). Despite this, covariate estimates are stable and carry the expected signs (Table~\ref{tab:coef}). Precipitation is the strongest weather deterrent, consistent with \citet{Gebhart2014}. Permutation feature importance (mean $\Delta$NLL, 3 repeats) ranks origin and destination fixed effects first, followed by weather as a group ($\Delta\text{NLL}=3{,}481$), month ($686$), and elevation ($27$).
+
+\begin{table}[h]
+\centering
+\caption{Covariate estimates (5{,}000 iterations, not fully converged).}
+\label{tab:coef}
+\smallskip
+\begin{tabular}{lrr}
+\toprule
+Covariate & $\hat\gamma$ & Expected sign \\
+\midrule
+Distance (km)       & $-0.601$ & $-$ \\
+Elevation gain (m)  & $+0.001$ & $-$ \\
+Temperature (°C)    & $-0.004$ & $+$ \\
+Precipitation (mm)  & $-0.409$ & $-$ \\
+Wind speed (m/s)    & $-0.012$ & $-$ \\
+Rel.\ humidity (\%) & $-0.007$ & $-$ \\
+Holiday indicator   & $-0.307$ & $-$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Elevation and temperature have unexpected signs, plausibly due to incomplete convergence or confounding with distance and season respectively.
+
+\section{Next Steps}
+\begin{itemize}\setlength\itemsep{1pt}
+  \item Run optimizer to convergence; report held-out MAE, Pearson $r$, and Poisson deviance on 2024 test set.
+  \item Compare distance-only baseline against the full model to isolate the contribution of elevation and weather.
+  \item Test for overdispersion; switch to negative-binomial if the residual deviance is large relative to degrees of freedom.
+  \item Investigate the positive elevation coefficient once the model converges.
+\end{itemize}
+
+\bibliography{references}
+\end{document}

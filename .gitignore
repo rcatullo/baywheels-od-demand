@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# Data and model artefacts (too large for git)
+data/processed/
+models/
+*.parquet
+*.pkl
+*.npy
+
+# Large generated outputs
+figures/map_interactive.html
+
+# Local tooling
+.DS_Store
+*.log
+.claude/
