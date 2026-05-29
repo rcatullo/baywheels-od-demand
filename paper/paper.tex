@@ -42,7 +42,8 @@ parameters tractable. A null (distance-only) model serves as baseline.
 The full model reduces out-of-sample Poisson deviance by 0.57\% over
 the null; precipitation carries the strongest weather signal
 ($\hat\gamma = -0.521$, a 40\% trip reduction per mm/hr), while
-elevation gain is negligible at Bay Area scale.
+elevation gain is negligible despite San Francisco's hilly terrain,
+likely due to Lyft siting docks on level ground.
 \end{abstract}
 
 % ─────────────────────────────────────────────────────────────────────────────
@@ -182,10 +183,9 @@ nonzero OD cells summing to 1{,}823{,}925 trips across 604 stations.
 Station latitudes and longitudes are submitted to the USGS Elevation
 Point Query Service \cite{USGS2023} to obtain elevations in metres.
 The elevation gain matrix is $\Delta H_{ij} = h_j - h_i$ for all
-$(i,j)$ pairs.  The bulk of the Bay Area network sits within a 30-m
-vertical range, so we expected this covariate to be marginal: Lyft
-places stations on flat, accessible ground rather than atop hills,
-limiting dock-to-dock elevation differences by design.
+$(i,j)$ pairs.  San Francisco's hilly topography made this a
+potentially informative covariate: steep climbs between docks were
+expected to suppress demand on uphill OD pairs.
 
 \textbf{Weather.}
 ERA5-Land \cite{Munoz2021} provides hourly 9-km gridded reanalysis at
@@ -381,15 +381,23 @@ more meaningful metric; the 0.57\% improvement of the full model
 represents a reduction of 158{,}128 deviance units.
 
 \textbf{Elevation.}
-We expected a negative elevation coefficient (climbs discourage
-cycling), and indeed $\hat\gamma_{\rm elev}<0$, but the magnitude is
-negligible.  Beyond the generally flat Bay Area topography, there is a
-structural reason: Lyft deliberately locates docks on level,
-accessible ground and avoids placing stations atop steep hills.  This
-operator constraint suppresses dock-to-dock elevation differences
-by design, so the signal cannot appear in the data regardless of how
-strong a biological effect exists.  A similar model applied to a
-system with hilly station siting might show a stronger effect.
+San Francisco's hills made elevation gain a motivating covariate for
+this study: we expected climbs to measurably suppress demand on uphill
+OD pairs.  The negligible fitted coefficient
+($\hat\gamma_{\rm elev}\approx -10^{-5}$) was therefore surprising.
+In retrospect, two mechanisms likely explain the null result.
+The primary explanation is a structural one: Lyft appears to locate
+docks on level, accessible ground, systematically avoiding steep
+inclines for accessibility and operational reasons.  If dock-to-dock
+elevation differences are small by design, the covariate lacks the
+variance needed to produce a detectable coefficient regardless of the
+true behavioural effect---a selection bias in the data-generating
+process.  A secondary factor is signal-to-noise: even where elevation
+differences exist, their effect on low-count cells (most OD pairs
+average $\approx$1 trip/hr) may be too small to distinguish from
+Poisson noise.  Both effects likely compound, and a model fit to a
+system with deliberately hilly station siting would be a cleaner test
+of the elevation hypothesis.
 
 \textbf{Ridge on $\boldsymbol\gamma$ only.}
 Penalising only the continuous covariates and not the station or
